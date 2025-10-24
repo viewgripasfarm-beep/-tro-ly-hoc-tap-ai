@@ -1,21 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import type { Task, Reminder, PriorityColors } from './types';
+import type { Task, Reminder, PriorityColors, AppUser } from './types';
 import { TaskStatus, Priority } from './types';
 import StudyPlanner from './components/StudyPlanner';
 import ProgressChart from './components/ProgressChart';
 import Reminders from './components/Reminders';
 import LoginScreen from './components/LoginScreen';
 import { auth } from './firebaseConfig';
-import { onAuthStateChanged, signOut, User } from 'firebase/auth';
+import { signOut } from 'firebase/auth';
 import * as firestoreService from './services/firestoreService';
+import { useAuth } from './hooks/useAuth';
 
 const App: React.FC = () => {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { user, isLoading: isAuthLoading } = useAuth();
   
   const [tasks, setTasks] = useState<Task[]>([]);
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [priorityColors, setPriorityColors] = useState<PriorityColors | null>(null);
+  const [isDataLoading, setIsDataLoading] = useState(true);
 
   const [theme, setTheme] = useState(() => {
     if (typeof window !== 'undefined' && window.localStorage) {
@@ -27,28 +28,39 @@ const App: React.FC = () => {
   });
   
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setLoading(true);
-      if (currentUser) {
-        setUser(currentUser);
-        const [userTasks, userReminders, userColors] = await Promise.all([
-          firestoreService.getTasks(currentUser.uid),
-          firestoreService.getReminders(currentUser.uid),
-          firestoreService.getPriorityColors(currentUser.uid)
-        ]);
-        setTasks(userTasks);
-        setReminders(userReminders);
-        setPriorityColors(userColors);
+    const fetchUserData = async () => {
+      if (user) {
+        setIsDataLoading(true);
+        try {
+          const [userTasks, userReminders, userColors] = await Promise.all([
+            firestoreService.getTasks(user.uid),
+            firestoreService.getReminders(user.uid),
+            firestoreService.getPriorityColors(user.uid)
+          ]);
+          setTasks(userTasks);
+          setReminders(userReminders);
+          setPriorityColors(userColors);
+        } catch (error) {
+          console.error("Lỗi khi tải dữ liệu người dùng:", error);
+          setTasks([]);
+          setReminders([]);
+          setPriorityColors(null);
+        } finally {
+          setIsDataLoading(false);
+        }
       } else {
-        setUser(null);
+        // Người dùng đã đăng xuất, xóa dữ liệu của họ
         setTasks([]);
         setReminders([]);
         setPriorityColors(null);
+        setIsDataLoading(false);
       }
-      setLoading(false);
-    });
-    return () => unsubscribe();
-  }, []);
+    };
+
+    if (!isAuthLoading) {
+      fetchUserData();
+    }
+  }, [user, isAuthLoading]);
 
 
   useEffect(() => {
@@ -134,7 +146,9 @@ const App: React.FC = () => {
       await firestoreService.savePriorityColors(user.uid, newColors);
   };
   
-  if (loading || (user && !priorityColors)) {
+  const showSpinner = isAuthLoading || (user && isDataLoading);
+
+  if (showSpinner) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-slate-100 dark:bg-slate-950">
         <i className="fas fa-spinner fa-spin text-4xl text-blue-500"></i>
@@ -189,7 +203,7 @@ const App: React.FC = () => {
               updateTaskStatus={updateTaskStatus}
               updateTaskPriority={updateTaskPriority} 
               deleteTask={deleteTask}
-              priorityColors={priorityColors}
+              priorityColors={priorityColors!}
               setPriorityColors={handleSetPriorityColors}
             />
           </div>
